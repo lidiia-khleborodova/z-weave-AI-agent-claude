@@ -14,7 +14,7 @@ interface Pattern {
 let patterns: Pattern[] = [];
 
 export function loadPatterns(): void {
-  const raw = fs.readFileSync(CSV_PATH, 'utf-8');
+  const raw = fs.readFileSync(CSV_PATH, 'utf-8').replace(/^\uFEFF/, ''); // strip BOM
   const rows = parse(raw, { columns: true, skip_empty_lines: true, trim: true }) as Record<string, string>[];
   patterns = rows.map((r) => ({
     name: r['Name'] ?? '',

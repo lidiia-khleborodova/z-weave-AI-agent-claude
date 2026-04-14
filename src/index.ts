@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import * as path from 'path';
 import express, { Request, Response } from 'express';
 import { fetchAllArticles } from './zendesk';
 import { searchArticles } from './search';
@@ -8,6 +9,7 @@ import { ParsedArticle } from './types';
 
 const app = express();
 app.use(express.json());
+app.use(express.static(path.join(__dirname, '..', 'public')));
 
 const PORT = parseInt(process.env.PORT ?? '3000', 10);
 const REFRESH_INTERVAL_MS = 21600000; // 6 hours

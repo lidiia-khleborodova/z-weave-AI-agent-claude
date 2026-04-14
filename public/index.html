@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Z-Emotion Help</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #f5f5f5;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #chat-container {
+      width: 100%;
+      max-width: 720px;
+      height: 90vh;
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    #chat-header {
+      padding: 16px 20px;
+      background: #111;
+      color: #fff;
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+    }
+
+    #messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .message {
+      max-width: 80%;
+      padding: 10px 14px;
+      border-radius: 12px;
+      font-size: 14px;
+      line-height: 1.6;
+      word-break: break-word;
+    }
+
+    .message table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 8px 0;
+      font-size: 13px;
+    }
+
+    .message th, .message td {
+      border: 1px solid #ddd;
+      padding: 6px 10px;
+      text-align: left;
+    }
+
+    .message th {
+      background: #f5f5f5;
+      font-weight: 600;
+    }
+
+    .message ul {
+      padding-left: 18px;
+      margin: 4px 0;
+    }
+
+    .message p {
+      margin: 4px 0;
+    }
+
+    .message.user {
+      align-self: flex-end;
+      background: #111;
+      color: #fff;
+      border-bottom-right-radius: 4px;
+    }
+
+    .message.assistant {
+      align-self: flex-start;
+      background: #f0f0f0;
+      color: #111;
+      border-bottom-left-radius: 4px;
+    }
+
+    .message.assistant a {
+      color: #0066cc;
+    }
+
+    .message.typing {
+      color: #999;
+      font-style: italic;
+    }
+
+    #input-area {
+      padding: 16px;
+      border-top: 1px solid #eee;
+      display: flex;
+      gap: 10px;
+    }
+
+    #input {
+      flex: 1;
+      padding: 10px 14px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      font-size: 14px;
+      outline: none;
+      resize: none;
+      height: 42px;
+      line-height: 1.4;
+      font-family: inherit;
+    }
+
+    #input:focus {
+      border-color: #111;
+    }
+
+    #send-btn {
+      padding: 10px 18px;
+      background: #111;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    #send-btn:disabled {
+      background: #999;
+      cursor: not-allowed;
+    }
+  </style>
+</head>
+<body>
+  <div id="chat-container">
+    <div id="chat-header">Z-Emotion Help Assistant</div>
+    <div id="messages">
+      <div class="message assistant">Hi! I can help you with Z-Emotion products, the help center, and finding patterns. What do you need?</div>
+    </div>
+    <div id="input-area">
+      <textarea id="input" placeholder="Ask a question..." rows="1"></textarea>
+      <button id="send-btn">Send</button>
+    </div>
+  </div>
+
+  <script>
+    const messages = document.getElementById('messages');
+    const input = document.getElementById('input');
+    const sendBtn = document.getElementById('send-btn');
+
+    function addMessage(text, role) {
+      const div = document.createElement('div');
+      div.className = `message ${role}`;
+      div.textContent = text;
+      messages.appendChild(div);
+      messages.scrollTop = messages.scrollHeight;
+      return div;
+    }
+
+    function escapeHtml(text) {
+      return text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    }
+
+    function renderMarkdown(text) {
+      const lines = text.split('\n');
+      let html = '';
+      let inTable = false;
+      let tableHeader = false;
+      let inList = false;
+
+      for (let i = 0; i < lines.length; i++) {
+        let line = lines[i];
+
+        // Table row
+        if (line.trim().startsWith('|')) {
+          // Skip separator rows like |---|---|
+          if (/^\|[\s\-|:]+\|$/.test(line.trim())) {
+            tableHeader = false;
+            continue;
+          }
+          if (!inTable) {
+            if (inList) { html += '</ul>'; inList = false; }
+            html += '<table>';
+            inTable = true;
+            tableHeader = true;
+          }
+          const cells = line.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+          const tag = tableHeader ? 'th' : 'td';
+          html += '<tr>' + cells.map(c => `<${tag}>${inlineMarkdown(c)}</${tag}>`).join('') + '</tr>';
+          tableHeader = false;
+          continue;
+        } else if (inTable) {
+          html += '</table>';
+          inTable = false;
+        }
+
+        // List item
+        if (/^[-*] /.test(line)) {
+          if (!inList) { html += '<ul>'; inList = true; }
+          html += `<li>${inlineMarkdown(line.replace(/^[-*] /, ''))}</li>`;
+          continue;
+        } else if (inList) {
+          html += '</ul>';
+          inList = false;
+        }
+
+        // Heading
+        if (/^#{1,3} /.test(line)) {
+          const level = line.match(/^(#{1,3})/)[1].length;
+          const content = line.replace(/^#{1,3} /, '');
+          html += `<h${level + 2} style="margin:8px 0 4px;font-size:${15 - level}px">${inlineMarkdown(content)}</h${level + 2}>`;
+          continue;
+        }
+
+        // Empty line
+        if (line.trim() === '') {
+          html += '<br>';
+          continue;
+        }
+
+        // Regular paragraph
+        html += `<p>${inlineMarkdown(line)}</p>`;
+      }
+
+      if (inTable) html += '</table>';
+      if (inList) html += '</ul>';
+
+      return html;
+    }
+
+    function inlineMarkdown(text) {
+      return escapeHtml(text)
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g, '<a href="$2" target="_blank">$1</a>')
+        .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank">$1</a>');
+    }
+
+    async function sendMessage() {
+      const question = input.value.trim();
+      if (!question) return;
+
+      input.value = '';
+      sendBtn.disabled = true;
+      addMessage(question, 'user');
+
+      const typingDiv = addMessage('Thinking...', 'assistant typing');
+
+      try {
+        const response = await fetch('/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question }),
+        });
+
+        typingDiv.classList.remove('typing');
+        typingDiv.textContent = '';
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let fullText = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          fullText += decoder.decode(value, { stream: true });
+          typingDiv.innerHTML = renderMarkdown(fullText);
+          messages.scrollTop = messages.scrollHeight;
+        }
+      } catch (err) {
+        typingDiv.textContent = 'Something went wrong. Please try again.';
+        typingDiv.classList.remove('typing');
+      }
+
+      sendBtn.disabled = false;
+      input.focus();
+    }
+
+    sendBtn.addEventListener('click', sendMessage);
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+  </script>
+</body>
+</html>
