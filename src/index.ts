@@ -10,7 +10,7 @@ const app = express();
 app.use(express.json());
 
 const PORT = parseInt(process.env.PORT ?? '3000', 10);
-const REFRESH_INTERVAL_MS = 21_600_000; // 6 hours in milliseconds
+const REFRESH_INTERVAL_MS = 21600000; // 6 hours
 
 let articles: ParsedArticle[] = [];
 
