@@ -19,7 +19,7 @@
 
     #chat-container {
       width: 100%;
-      max-width: 720px;
+      max-width: 1230px;
       height: 90vh;
       background: #fff;
       border-radius: 12px;
@@ -45,6 +45,35 @@
       display: flex;
       flex-direction: column;
       gap: 16px;
+      position: relative;
+    }
+
+    #welcome {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 40px;
+      pointer-events: none;
+    }
+
+    #welcome h1 {
+      font-size: 26px;
+      font-weight: 600;
+      color: #111;
+      margin-bottom: 10px;
+    }
+
+    #welcome p {
+      font-size: 15px;
+      color: #888;
+    }
+
+    #welcome.hidden {
+      display: none;
     }
 
     .message {
@@ -151,7 +180,10 @@
   <div id="chat-container">
     <div id="chat-header">Z-Emotion Help Assistant</div>
     <div id="messages">
-      <div class="message assistant">Hi! I can help you with Z-Emotion products, the help center, and finding patterns. What do you need?</div>
+      <div id="welcome">
+        <h1>How can I help you?</h1>
+        <p>Ask about Z-Emotion products, help center articles, or find a pattern.</p>
+      </div>
     </div>
     <div id="input-area">
       <textarea id="input" placeholder="Ask a question..." rows="1"></textarea>
@@ -163,6 +195,7 @@
     const messages = document.getElementById('messages');
     const input = document.getElementById('input');
     const sendBtn = document.getElementById('send-btn');
+    const welcome = document.getElementById('welcome');
 
     function addMessage(text, role) {
       const div = document.createElement('div');
@@ -248,11 +281,32 @@
     }
 
     function inlineMarkdown(text) {
-      return escapeHtml(text)
-        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-        .replace(/\*(.+?)\*/g, '<em>$1</em>')
-        .replace(/\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g, '<a href="$2" target="_blank">$1</a>')
-        .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank">$1</a>');
+      // Process markdown links first (before escaping), then escape remaining text
+      const parts = [];
+      // Regex matches: [text](url), bare urls, **bold**, *italic*
+      const pattern = /\[([^\]]+)\]\((https?:\/\/[^)]+)\)|(https?:\/\/[^\s]+?)(?=[;:!?)'"\s]|[.,](?:\s|$)|$)|\*\*(.+?)\*\*|\*(.+?)\*/g;
+      let last = 0;
+      let match;
+      while ((match = pattern.exec(text)) !== null) {
+        // Escape plain text before this match
+        parts.push(escapeHtml(text.slice(last, match.index)));
+        if (match[1] && match[2]) {
+          // [label](url)
+          parts.push(`<a href="${match[2]}" target="_blank">${escapeHtml(match[1])}</a>`);
+        } else if (match[3]) {
+          // bare url
+          parts.push(`<a href="${match[3]}" target="_blank">${escapeHtml(match[3])}</a>`);
+        } else if (match[4]) {
+          // **bold**
+          parts.push(`<strong>${escapeHtml(match[4])}</strong>`);
+        } else if (match[5]) {
+          // *italic*
+          parts.push(`<em>${escapeHtml(match[5])}</em>`);
+        }
+        last = match.index + match[0].length;
+      }
+      parts.push(escapeHtml(text.slice(last)));
+      return parts.join('');
     }
 
     async function sendMessage() {
@@ -261,6 +315,7 @@
 
       input.value = '';
       sendBtn.disabled = true;
+      welcome.classList.add('hidden');
       addMessage(question, 'user');
 
       const typingDiv = addMessage('Thinking...', 'assistant typing');

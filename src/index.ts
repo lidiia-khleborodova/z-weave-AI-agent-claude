@@ -3,7 +3,7 @@ import * as path from 'path';
 import express, { Request, Response } from 'express';
 import { fetchAllArticles } from './zendesk';
 import { searchArticles } from './search';
-import { askAgent } from './agent';
+import { askAgent, translateToEnglish } from './agent';
 import { loadPatterns, searchPatterns, isPatternQuery, formatPatternResults } from './patterns';
 import { ParsedArticle } from './types';
 
@@ -48,7 +48,8 @@ app.post('/chat', async (req: Request, res: Response) => {
   }
 
   try {
-    const relevant = searchArticles(q, articles);
+    const englishQ = await translateToEnglish(q);
+    const relevant = searchArticles(englishQ, articles);
     for await (const chunk of askAgent(q, relevant)) {
       res.write(chunk);
     }
