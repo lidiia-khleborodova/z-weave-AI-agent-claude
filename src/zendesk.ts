@@ -46,14 +46,18 @@ function fetchJson<T>(url: string): Promise<T> {
   });
 }
 
+function extractYoutubeUrls(html: string): string[] {
+  const urls: string[] = [];
+  const regex = /data-oembed-url="(https:\/\/www\.youtube\.com\/watch\?v=[^"]+)"/g;
+  let match;
+  while ((match = regex.exec(html)) !== null) {
+    urls.push(match[1]);
+  }
+  return urls;
+}
+
 function stripHtml(html: string): string {
-  // Replace block-level tags with newlines to preserve structure
-  let text = html
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/p>/gi, '\n')
-    .replace(/<\/div>/gi, '\n')
-    .replace(/<\/li>/gi, '\n')
-    .replace(/<\/h[1-6]>/gi, '\n');
+  let text = html.replace(/<br\s*\/?>|<\/p>|<\/div>|<\/li>|<\/h[1-6]>/gi, '\n');
 
   // Remove all remaining HTML tags
   text = text.replace(/<[^>]+>/g, '');
@@ -96,11 +100,17 @@ export async function fetchAllArticles(): Promise<ParsedArticle[]> {
   const published = allArticles.filter((a) => !a.draft);
   console.log(`Done. ${published.length} published articles (${allArticles.length - published.length} drafts skipped).`);
 
-  return published.map((article) => ({
-    id: article.id,
-    title: article.title,
-    body: stripHtml(article.body),
-    url: article.html_url,
-    updated_at: article.updated_at,
-  }));
+  return published.map((article) => {
+    const youtubeUrls = extractYoutubeUrls(article.body);
+    const bodyText = stripHtml(article.body);
+    const videoSection = youtubeUrls.length > 0
+      ? '\n\nYouTube videos in this article:\n' + youtubeUrls.map((u) => `- ${u}`).join('\n')
+      : '';
+    return {
+      id: article.id,
+      title: article.title,
+      body: bodyText + videoSection,
+      url: article.html_url,
+    };
+  });
 }

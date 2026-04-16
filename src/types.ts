@@ -5,7 +5,6 @@ export interface ZendeskArticle {
   html_url: string;
   section_id: number;
   locale: string;
-  updated_at: string;
   draft: boolean;
 }
 
@@ -14,5 +13,4 @@ export interface ParsedArticle {
   title: string;
   body: string; // plain text
   url: string;
-  updated_at: string;
 }

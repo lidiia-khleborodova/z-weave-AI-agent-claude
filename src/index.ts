@@ -2,7 +2,7 @@ import 'dotenv/config';
 import * as path from 'path';
 import express, { Request, Response } from 'express';
 import { fetchAllArticles } from './zendesk';
-import { searchArticles } from './search';
+import { buildEmbeddingIndex, searchArticles } from './search';
 import { askAgent, translateToEnglish } from './agent';
 import { loadPatterns, searchPatterns, isPatternQuery, formatPatternResults } from './patterns';
 import { ParsedArticle } from './types';
@@ -20,6 +20,7 @@ async function refreshArticles(): Promise<void> {
   console.log('Refreshing articles from Zendesk...');
   try {
     articles = await fetchAllArticles();
+    await buildEmbeddingIndex(articles);
     console.log(`Refresh complete. ${articles.length} articles loaded.`);
   } catch (err) {
     console.error('Failed to refresh articles:', err);
@@ -39,8 +40,10 @@ app.post('/chat', async (req: Request, res: Response) => {
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   res.setHeader('Transfer-Encoding', 'chunked');
 
-  // Pattern search — handle before calling Claude
-  if (isPatternQuery(q)) {
+  const isTutorialQuery = /tutorial|video|how to|how-to|youtube/i.test(q);
+
+  // Pattern search — handle before calling Claude (skip if user is asking for a tutorial)
+  if (!isTutorialQuery && isPatternQuery(q)) {
     const results = searchPatterns(q);
     res.write(formatPatternResults(results));
     res.end();
@@ -49,7 +52,7 @@ app.post('/chat', async (req: Request, res: Response) => {
 
   try {
     const englishQ = await translateToEnglish(q);
-    const relevant = searchArticles(englishQ, articles);
+    const relevant = await searchArticles(englishQ);
     for await (const chunk of askAgent(q, relevant)) {
       res.write(chunk);
     }
@@ -73,6 +76,7 @@ async function main() {
 
   loadPatterns();
   articles = await fetchAllArticles();
+  await buildEmbeddingIndex(articles);
   console.log(`Ready with ${articles.length} help center articles.`);
 
   setInterval(refreshArticles, REFRESH_INTERVAL_MS);

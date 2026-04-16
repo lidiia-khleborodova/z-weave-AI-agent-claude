@@ -1,44 +1,55 @@
+import OpenAI from 'openai';
 import { ParsedArticle } from './types';
 
-const STOP_WORDS = new Set([
-  'a', 'an', 'the', 'is', 'it', 'in', 'on', 'at', 'to', 'for',
-  'of', 'and', 'or', 'but', 'not', 'with', 'this', 'that', 'how',
-  'do', 'i', 'my', 'can', 'what', 'when', 'where', 'why', 'who',
-]);
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
-function tokenize(text: string): string[] {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .split(/\s+/)
-    .filter((w) => w.length > 1 && !STOP_WORDS.has(w));
+interface EmbeddedArticle {
+  article: ParsedArticle;
+  embedding: number[];
 }
 
-export function searchArticles(
-  query: string,
-  articles: ParsedArticle[],
-  topN = 5
-): ParsedArticle[] {
-  const queryTokens = tokenize(query);
-  if (queryTokens.length === 0) return [];
+let embeddedArticles: EmbeddedArticle[] = [];
 
-  const scored = articles.map((article) => {
-    const titleTokens = tokenize(article.title);
-    const bodyTokens = tokenize(article.body);
+function cosineSimilarity(a: number[], b: number[]): number {
+  let dot = 0, normA = 0, normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+}
 
-    let score = 0;
-    for (const token of queryTokens) {
-      // Title matches are worth more
-      const titleMatches = titleTokens.filter((t) => t.includes(token)).length;
-      const bodyMatches = bodyTokens.filter((t) => t.includes(token)).length;
-      score += titleMatches * 3 + bodyMatches;
-    }
-
-    return { article, score };
+async function embed(text: string): Promise<number[]> {
+  const res = await openai.embeddings.create({
+    model: 'text-embedding-3-small',
+    input: text.slice(0, 8000),
   });
+  return res.data[0].embedding;
+}
 
-  return scored
-    .filter((s) => s.score > 0)
+export async function buildEmbeddingIndex(articles: ParsedArticle[]): Promise<void> {
+  console.log(`Building embeddings for ${articles.length} articles...`);
+  embeddedArticles = await Promise.all(
+    articles.map(async (article) => ({
+      article,
+      embedding: await embed(`${article.title}\n\n${article.body}`),
+    }))
+  );
+  console.log('Embedding index ready.');
+}
+
+export async function searchArticles(
+  query: string,
+  topN = 5
+): Promise<ParsedArticle[]> {
+  if (embeddedArticles.length === 0) return [];
+  const queryEmbedding = await embed(query);
+  return embeddedArticles
+    .map(({ article, embedding }) => ({
+      article,
+      score: cosineSimilarity(queryEmbedding, embedding),
+    }))
     .sort((a, b) => b.score - a.score)
     .slice(0, topN)
     .map((s) => s.article);
