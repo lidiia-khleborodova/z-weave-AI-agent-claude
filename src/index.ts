@@ -1,10 +1,11 @@
 import 'dotenv/config';
+import { franc } from 'franc-min';
 import * as path from 'path';
 import express, { Request, Response } from 'express';
 import { fetchAllArticles } from './zendesk';
-import { buildEmbeddingIndex, searchArticles } from './search';
+import { buildEmbeddingIndex, buildIntentEmbeddings, detectIntent, searchArticles } from './search';
 import { askAgent, translateToEnglish } from './agent';
-import { loadPatterns, searchPatterns, isPatternQuery, formatPatternResults } from './patterns';
+import { loadPatterns, searchPatterns, formatPatternResults } from './patterns';
 import { ParsedArticle } from './types';
 
 const app = express();
@@ -40,18 +41,19 @@ app.post('/chat', async (req: Request, res: Response) => {
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   res.setHeader('Transfer-Encoding', 'chunked');
 
-  const isTutorialQuery = /tutorial|video|how to|how-to|youtube/i.test(q);
+  const intent = await detectIntent(q);
 
-  // Pattern search — handle before calling Claude (skip if user is asking for a tutorial)
-  if (!isTutorialQuery && isPatternQuery(q)) {
-    const results = searchPatterns(q);
+  if (intent === 'pattern') {
+    const results = await searchPatterns(q);
     res.write(formatPatternResults(results));
     res.end();
     return;
   }
 
   try {
-    const englishQ = await translateToEnglish(q);
+    const lang = franc(q);
+    const englishQ = (lang === 'eng' || lang === 'und') ? q : await translateToEnglish(q);
+
     const relevant = await searchArticles(englishQ);
     for await (const chunk of askAgent(q, relevant)) {
       res.write(chunk);
@@ -74,9 +76,8 @@ app.get('/health', (_req, res) => {
 async function main() {
   console.log('Starting Help Center Agent...');
 
-  loadPatterns();
   articles = await fetchAllArticles();
-  await buildEmbeddingIndex(articles);
+  await Promise.all([buildEmbeddingIndex(articles), buildIntentEmbeddings(), loadPatterns()]);
   console.log(`Ready with ${articles.length} help center articles.`);
 
   setInterval(refreshArticles, REFRESH_INTERVAL_MS);

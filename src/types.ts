@@ -8,6 +8,18 @@ export interface ZendeskArticle {
   draft: boolean;
 }
 
+export interface Pattern {
+  name: string;
+  link: string;
+  gender: string;
+  type: string;
+}
+
+export interface EmbeddedPattern {
+  pattern: Pattern;
+  embedding: number[];
+}
+
 export interface ParsedArticle {
   id: number;
   title: string;

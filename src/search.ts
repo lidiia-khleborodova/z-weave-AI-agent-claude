@@ -1,7 +1,5 @@
-import OpenAI from 'openai';
+import { embed, cosineSimilarity } from './embeddings';
 import { ParsedArticle } from './types';
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
 interface EmbeddedArticle {
   article: ParsedArticle;
@@ -10,22 +8,45 @@ interface EmbeddedArticle {
 
 let embeddedArticles: EmbeddedArticle[] = [];
 
-function cosineSimilarity(a: number[], b: number[]): number {
-  let dot = 0, normA = 0, normB = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
-  }
-  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+const PATTERN_INTENT_PHRASES = [
+  'download a sewing pattern',
+  'find a pattern template in the asset library',
+  'get a clothing pattern file',
+  'browse pattern assets',
+  'download shirt pants jacket pattern',
+];
+
+const TUTORIAL_INTENT_PHRASES = [
+  'show me a video tutorial',
+  'how to make this step by step',
+  'watch a guide on how to do this',
+  'learn with a video demo',
+  'tutorial for creating clothing',
+];
+
+let patternIntentEmbeddings: number[][] = [];
+let tutorialIntentEmbeddings: number[][] = [];
+
+export async function buildIntentEmbeddings(): Promise<void> {
+  [patternIntentEmbeddings, tutorialIntentEmbeddings] = await Promise.all([
+    Promise.all(PATTERN_INTENT_PHRASES.map(embed)),
+    Promise.all(TUTORIAL_INTENT_PHRASES.map(embed)),
+  ]);
+  console.log('Intent embeddings ready.');
 }
 
-async function embed(text: string): Promise<number[]> {
-  const res = await openai.embeddings.create({
-    model: 'text-embedding-3-small',
-    input: text.slice(0, 8000),
-  });
-  return res.data[0].embedding;
+function maxSimilarity(queryEmbedding: number[], references: number[][]): number {
+  return Math.max(...references.map((ref) => cosineSimilarity(queryEmbedding, ref)));
+}
+
+export async function detectIntent(query: string): Promise<'pattern' | 'tutorial' | 'general'> {
+  const queryEmbedding = await embed(query);
+  const patternScore = maxSimilarity(queryEmbedding, patternIntentEmbeddings);
+  const tutorialScore = maxSimilarity(queryEmbedding, tutorialIntentEmbeddings);
+
+  if (tutorialScore > 0.4 && tutorialScore >= patternScore) return 'tutorial';
+  if (patternScore > 0.4) return 'pattern';
+  return 'general';
 }
 
 export async function buildEmbeddingIndex(articles: ParsedArticle[]): Promise<void> {

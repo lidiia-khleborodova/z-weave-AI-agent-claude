@@ -46,14 +46,26 @@ function fetchJson<T>(url: string): Promise<T> {
   });
 }
 
-function extractYoutubeUrls(html: string): string[] {
-  const urls: string[] = [];
-  const regex = /data-oembed-url="(https:\/\/www\.youtube\.com\/watch\?v=[^"]+)"/g;
+/* workaround for videos at the same page
+ */
+function extractYoutubeVideos(html: string): { title: string; url: string }[] {
+  const videos: { title: string; url: string }[] = [];
+  // Match h2 titles and the oembed URL that follows them
+  const regex = /<h2[^>]*>[\s\S]*?<br[^>]*>([\s\S]*?)<\/h2>[\s\S]*?data-oembed-url="(https:\/\/www\.youtube\.com\/watch\?v=[^"]+)"/g;
   let match;
   while ((match = regex.exec(html)) !== null) {
-    urls.push(match[1]);
+    const title = match[1].replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').trim();
+    const url = match[2].replace(/&amp;/g, '&');
+    if (title) videos.push({ title, url });
   }
-  return urls;
+  // Fall back: extract URLs without titles for any remaining videos
+  const paired = new Set(videos.map((v) => v.url));
+  const bareRegex = /data-oembed-url="(https:\/\/www\.youtube\.com\/watch\?v=[^"]+)"/g;
+  while ((match = bareRegex.exec(html)) !== null) {
+    const url = match[1].replace(/&amp;/g, '&');
+    if (!paired.has(url)) videos.push({ title: '', url });
+  }
+  return videos;
 }
 
 function stripHtml(html: string): string {
@@ -101,10 +113,10 @@ export async function fetchAllArticles(): Promise<ParsedArticle[]> {
   console.log(`Done. ${published.length} published articles (${allArticles.length - published.length} drafts skipped).`);
 
   return published.map((article) => {
-    const youtubeUrls = extractYoutubeUrls(article.body);
+    const videos = extractYoutubeVideos(article.body);
     const bodyText = stripHtml(article.body);
-    const videoSection = youtubeUrls.length > 0
-      ? '\n\nYouTube videos in this article:\n' + youtubeUrls.map((u) => `- ${u}`).join('\n')
+    const videoSection = videos.length > 0
+      ? '\n\nYouTube videos in this article:\n' + videos.map((v) => `- ${v.title ? v.title + ': ' : ''}${v.url}`).join('\n')
       : '';
     return {
       id: article.id,

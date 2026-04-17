@@ -29,7 +29,7 @@ export async function translateToEnglish(text: string): Promise<string> {
     max_tokens: 256,
     messages: [{
       role: 'user',
-      content: `Detect the language of the following text. If it is already English, return it unchanged. If it is another language, translate it to English. Return only the translated text, nothing else.\n\n${text}`,
+      content: `Translate this text to English. Return only the translated text, nothing else.\n\n${text}`,
     }],
   });
   const block = response.content[0];
