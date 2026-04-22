@@ -28,14 +28,16 @@ export async function loadPatterns(): Promise<void> {
   console.log('Pattern embeddings ready.');
 }
 
-export async function searchPatterns(query: string, topN = 5): Promise<Pattern[]> {
+export async function searchPatterns(query: string, topN = 5, threshold = 0.38): Promise<Pattern[]> {
   if (embeddedPatterns.length === 0) return [];
   const queryEmbedding = await embed(query);
-  return embeddedPatterns
-    .map(({ pattern, embedding }) => ({
-      pattern,
-      score: cosineSimilarity(queryEmbedding, embedding),
-    }))
+  const scored = embeddedPatterns.map(({ pattern, embedding }) => ({
+    pattern,
+    score: cosineSimilarity(queryEmbedding, embedding),
+  }));
+  console.log('[pattern scores]', scored.sort((a, b) => b.score - a.score).slice(0, 5).map((s) => `"${s.pattern.name}": ${s.score.toFixed(3)}`).join(', '));
+  return scored
+    .filter((s) => s.score >= threshold)
     .sort((a, b) => b.score - a.score)
     .slice(0, topN)
     .map((s) => s.pattern);
