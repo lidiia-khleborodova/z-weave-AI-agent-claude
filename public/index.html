@@ -76,6 +76,13 @@
       display: none;
     }
 
+    .img-chat {
+      border-radius: 6px;
+      margin: 6px 0;
+      display: block;
+      max-width: 560px;
+    }
+
     .message {
       max-width: 80%;
       padding: 10px 14px;
@@ -254,6 +261,13 @@
         } else if (inList) {
           html += '</ul>';
           inList = false;
+        }
+
+        // Image
+        const imgMatch = line.match(/^!\[([^\]]*)\]\((https?:\/\/[^)]+)\)$/);
+        if (imgMatch) {
+          html += `<img src="${imgMatch[2]}" alt="${escapeHtml(imgMatch[1])}" class="img-chat">`;
+          continue;
         }
 
         // Heading

@@ -5,6 +5,7 @@ export interface ZendeskArticle {
   html_url: string;
   section_id: number;
   locale: string;
+  updated_at: string;
   draft: boolean;
 }
 
@@ -20,9 +21,18 @@ export interface EmbeddedPattern {
   embedding: number[];
 }
 
+export interface ArticleImage {
+  alt: string;
+  src: string;
+  embedding?: number[];
+}
+
 export interface ParsedArticle {
   id: number;
   title: string;
   body: string; // plain text
   url: string;
+  section: string;
+  updated_at: string;
+  images: ArticleImage[];
 }

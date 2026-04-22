@@ -9,11 +9,11 @@ interface EmbeddedArticle {
 let embeddedArticles: EmbeddedArticle[] = [];
 
 const PATTERN_INTENT_PHRASES = [
-  'download a sewing pattern',
-  'find a pattern template in the asset library',
-  'get a clothing pattern file',
-  'browse pattern assets',
-  'download shirt pants jacket pattern',
+  'download a sewing pattern from the asset library',
+  'find a ZLS pattern template to download',
+  'browse and download clothing patterns',
+  'get a downloadable shirt pants jacket pattern file',
+  'show me patterns available in the asset library',
 ];
 
 const TUTORIAL_INTENT_PHRASES = [
@@ -43,21 +43,51 @@ export async function detectIntent(query: string): Promise<'pattern' | 'tutorial
   const queryEmbedding = await embed(query);
   const patternScore = maxSimilarity(queryEmbedding, patternIntentEmbeddings);
   const tutorialScore = maxSimilarity(queryEmbedding, tutorialIntentEmbeddings);
+  console.log(`[intent scores] pattern: ${patternScore.toFixed(3)}, tutorial: ${tutorialScore.toFixed(3)}`);
 
   if (tutorialScore > 0.4 && tutorialScore >= patternScore) return 'tutorial';
-  if (patternScore > 0.4) return 'pattern';
+  if (patternScore > 0.5) return 'pattern';
   return 'general';
 }
 
 export async function buildEmbeddingIndex(articles: ParsedArticle[]): Promise<void> {
   console.log(`Building embeddings for ${articles.length} articles...`);
   embeddedArticles = await Promise.all(
-    articles.map(async (article) => ({
-      article,
-      embedding: await embed(`${article.title}\n\n${article.body}`),
-    }))
+    articles.map(async (article) => {
+      const articleEmbedding = await embed(`${article.title}\n\n${article.body}`);
+      const images = await Promise.all(
+        article.images.map(async (img) => ({
+          ...img,
+          embedding: await embed(`${article.title}: ${img.alt}`),
+        }))
+      );
+      return { article: { ...article, images }, embedding: articleEmbedding };
+    })
   );
   console.log('Embedding index ready.');
+}
+
+export async function getRelevantImages(
+  query: string,
+  articles: ParsedArticle[],
+  topN = 6,
+  threshold = 0.28
+): Promise<{ alt: string; src: string }[]> {
+  const queryEmbedding = await embed(query);
+  const candidates = articles
+    .flatMap((a) => a.images.filter((img) => img.embedding))
+    .filter((img) => !/^Screenshot\s[\d\-. ]+\.png$/i.test(img.alt)); // skip filename-only alts
+  const scored = candidates.map((img) => ({ img, score: cosineSimilarity(queryEmbedding, img.embedding!) }));
+  console.log('[image scores]', scored.map((s) => `"${s.img.alt}": ${s.score.toFixed(3)}`).join(', '));
+  return scored
+    .filter((s) => s.score >= threshold)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, topN)
+    .map((s) => ({ alt: s.img.alt, src: s.img.src }));
+}
+
+export function getAllArticles(): ParsedArticle[] {
+  return embeddedArticles.map((e) => e.article);
 }
 
 export async function searchArticles(

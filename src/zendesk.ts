@@ -1,6 +1,6 @@
 import * as https from 'https';
 import * as http from 'http';
-import { ZendeskArticle, ParsedArticle } from './types';
+import { ZendeskArticle, ParsedArticle, ArticleImage } from './types';
 
 const SUBDOMAIN = process.env.ZENDESK_SUBDOMAIN!;
 const EMAIL = process.env.ZENDESK_EMAIL!;
@@ -68,6 +68,18 @@ function extractYoutubeVideos(html: string): { title: string; url: string }[] {
   return videos;
 }
 
+function extractImages(html: string): ArticleImage[] {
+  const images: ArticleImage[] = [];
+  const regex = /<img[^>]+src="([^"]+)"[^>]*alt="([^"]*)"[^>]*>/gi;
+  let match;
+  while ((match = regex.exec(html)) !== null) {
+    const src = match[1];
+    const alt = match[2].trim();
+    if (alt) images.push({ src, alt });
+  }
+  return images;
+}
+
 function stripHtml(html: string): string {
   let text = html.replace(/<br\s*\/?>|<\/p>|<\/div>|<\/li>|<\/h[1-6]>/gi, '\n');
 
@@ -93,6 +105,50 @@ interface ZendeskArticlesResponse {
   count: number;
 }
 
+interface ZendeskSection {
+  id: number;
+  name: string;
+  category_id: number;
+}
+
+interface ZendeskCategory {
+  id: number;
+  name: string;
+}
+
+interface ZendeskSectionsResponse {
+  sections: ZendeskSection[];
+  next_page: string | null;
+}
+
+interface ZendeskCategoriesResponse {
+  categories: ZendeskCategory[];
+  next_page: string | null;
+}
+
+async function fetchSectionToCategory(): Promise<Map<number, string>> {
+  const categoryMap = new Map<number, string>();
+  let catPage: string | null = `https://${SUBDOMAIN}/api/v2/help_center/categories.json?per_page=100`;
+  while (catPage !== null) {
+    const url: string = catPage;
+    const response = await fetchJson<ZendeskCategoriesResponse>(url);
+    for (const c of response.categories) categoryMap.set(c.id, c.name);
+    catPage = response.next_page;
+  }
+
+  const sectionMap = new Map<number, string>();
+  let secPage: string | null = `https://${SUBDOMAIN}/api/v2/help_center/sections.json?per_page=100`;
+  while (secPage !== null) {
+    const url: string = secPage;
+    const response = await fetchJson<ZendeskSectionsResponse>(url);
+    for (const s of response.sections) {
+      sectionMap.set(s.id, categoryMap.get(s.category_id) ?? 'Unknown');
+    }
+    secPage = response.next_page;
+  }
+  return sectionMap;
+}
+
 export async function fetchAllArticles(): Promise<ParsedArticle[]> {
   const baseUrl = `https://${SUBDOMAIN}/api/v2/help_center/articles.json`;
   const allArticles: ZendeskArticle[] = [];
@@ -101,19 +157,25 @@ export async function fetchAllArticles(): Promise<ParsedArticle[]> {
 
   console.log('Fetching articles from Zendesk...');
 
-  while (nextPage !== null) {
-    const url: string = nextPage;
-    const response: ZendeskArticlesResponse = await fetchJson<ZendeskArticlesResponse>(url);
-    allArticles.push(...response.articles);
-    nextPage = response.next_page;
-    console.log(`  Fetched ${allArticles.length} / ${response.count} articles`);
-  }
+  const [, sectionNames] = await Promise.all([
+    (async () => {
+      while (nextPage !== null) {
+        const url: string = nextPage;
+        const response: ZendeskArticlesResponse = await fetchJson<ZendeskArticlesResponse>(url);
+        allArticles.push(...response.articles);
+        nextPage = response.next_page;
+        console.log(`  Fetched ${allArticles.length} / ${response.count} articles`);
+      }
+    })(),
+    fetchSectionToCategory(),
+  ]);
 
   const published = allArticles.filter((a) => !a.draft);
   console.log(`Done. ${published.length} published articles (${allArticles.length - published.length} drafts skipped).`);
 
   return published.map((article) => {
     const videos = extractYoutubeVideos(article.body);
+    const images = extractImages(article.body);
     const bodyText = stripHtml(article.body);
     const videoSection = videos.length > 0
       ? '\n\nYouTube videos in this article:\n' + videos.map((v) => `- ${v.title ? v.title + ': ' : ''}${v.url}`).join('\n')
@@ -123,6 +185,9 @@ export async function fetchAllArticles(): Promise<ParsedArticle[]> {
       title: article.title,
       body: bodyText + videoSection,
       url: article.html_url,
+      section: sectionNames.get(article.section_id) ?? 'Unknown',
+      updated_at: article.updated_at,
+      images,
     };
   });
 }
