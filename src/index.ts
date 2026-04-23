@@ -59,8 +59,10 @@ app.post('/chat', async (req: Request, res: Response) => {
 
     const isVersionQuery = /version|release|update|latest|newest|changelog/i.test(englishQ);
 
-    let relevant;
-    if (isVersionQuery && mentionedApp) {
+    let relevant: ParsedArticle[] = [];
+    if (intent === 'general' && !mentionedApp) {
+      // skip article retrieval — Claude will use web search if needed
+    } else if (isVersionQuery && mentionedApp) {
       const parseVersion = (title: string): number[] => {
         const match = title.match(/^(\d+)\.(\d+)(?:\.(\d+))?/);
         return match ? [+match[1], +match[2], +(match[3] ?? 0)] : [-1, -1, -1];
@@ -77,10 +79,17 @@ app.post('/chat', async (req: Request, res: Response) => {
       console.log('[version sort]', versionArticles.slice(0, 5).map((a) => `"${a.title}"`).join(', '));
       relevant = versionArticles.length > 0 ? versionArticles.slice(0, 3) : allAppArticles.slice(0, 3);
     } else {
-      relevant = await searchArticles(englishQ, mentionedApp ? 20 : 5);
+      relevant = await searchArticles(englishQ, mentionedApp ? 30 : 5);
       if (mentionedApp) {
         const filtered = relevant.filter((a) => a.section.toLowerCase().includes(mentionedApp));
-        relevant = filtered.length > 0 ? filtered.slice(0, 5) : relevant.slice(0, 5);
+        if (filtered.length > 0) {
+          const manuals = filtered.filter((a) => !a.section.toLowerCase().includes('faq'));
+          const faqs = filtered.filter((a) => a.section.toLowerCase().includes('faq'));
+          // prefer manuals, fill remaining slots with FAQs
+          relevant = [...manuals, ...faqs].slice(0, 5);
+        } else {
+          relevant = relevant.slice(0, 5);
+        }
       }
     }
     console.log('[retrieved articles]', relevant.map((a) => `"${a.title}" (${a.section})`).join(', '));
