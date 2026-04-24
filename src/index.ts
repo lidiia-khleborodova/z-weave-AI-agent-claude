@@ -1,7 +1,9 @@
 import 'dotenv/config';
 import { franc } from 'franc-min';
 import * as path from 'path';
+import * as crypto from 'crypto';
 import express, { Request, Response } from 'express';
+import Anthropic from '@anthropic-ai/sdk';
 import { fetchAllArticles } from './zendesk';
 import { buildEmbeddingIndex, buildIntentEmbeddings, detectIntent, searchArticles, getRelevantImages, getAllArticles } from './search';
 import { askAgent, translateToEnglish } from './agent';
@@ -14,8 +16,23 @@ app.use(express.static(path.join(__dirname, '..', 'public')));
 
 const PORT = parseInt(process.env.PORT ?? '3000', 10);
 const REFRESH_INTERVAL_MS = 21600000; // 6 hours
+const HISTORY_WINDOW = 4; // last 4 messages = 2 exchanges
+const SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
 let articles: ParsedArticle[] = [];
+
+interface Session {
+  history: Anthropic.MessageParam[];
+  lastActive: number;
+}
+const sessions = new Map<string, Session>();
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, session] of sessions) {
+    if (now - session.lastActive > SESSION_TTL_MS) sessions.delete(id);
+  }
+}, 5 * 60 * 1000);
 
 async function refreshArticles(): Promise<void> {
   console.log('Refreshing articles from Zendesk...');
@@ -29,7 +46,7 @@ async function refreshArticles(): Promise<void> {
 }
 
 app.post('/chat', async (req: Request, res: Response) => {
-  const { question } = req.body as { question?: string };
+  const { question, sessionId: incomingSessionId } = req.body as { question?: string; sessionId?: string };
 
   if (!question || typeof question !== 'string' || question.trim() === '') {
     res.status(400).json({ error: 'question is required' });
@@ -37,9 +54,13 @@ app.post('/chat', async (req: Request, res: Response) => {
   }
 
   const q = question.trim();
+  const sessionId = incomingSessionId ?? crypto.randomUUID();
+  const session = sessions.get(sessionId) ?? { history: [], lastActive: Date.now() };
 
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   res.setHeader('Transfer-Encoding', 'chunked');
+  res.setHeader('X-Session-Id', sessionId);
+  res.setHeader('Access-Control-Expose-Headers', 'X-Session-Id');
 
   const intent = await detectIntent(q);
 
@@ -85,18 +106,29 @@ app.post('/chat', async (req: Request, res: Response) => {
         if (filtered.length > 0) {
           const manuals = filtered.filter((a) => !a.section.toLowerCase().includes('faq'));
           const faqs = filtered.filter((a) => a.section.toLowerCase().includes('faq'));
-          // prefer manuals, fill remaining slots with FAQs
           relevant = [...manuals, ...faqs].slice(0, 5);
         } else {
           relevant = relevant.slice(0, 5);
         }
       }
     }
+
     console.log('[retrieved articles]', relevant.map((a) => `"${a.title}" (${a.section})`).join(', '));
     const images = await getRelevantImages(englishQ, relevant);
-    for await (const chunk of askAgent(q, relevant, images)) {
-      res.write(chunk);
+    const history = session.history.slice(-HISTORY_WINDOW);
+
+    let assistantMessage: Anthropic.MessageParam | undefined;
+    for await (const event of askAgent(q, relevant, history, images)) {
+      if (event.chunk) res.write(event.chunk);
+      if (event.assistantMessage) assistantMessage = event.assistantMessage;
     }
+
+    if (assistantMessage) {
+      session.history = [...history, { role: 'user' as const, content: q }, assistantMessage].slice(-HISTORY_WINDOW);
+      session.lastActive = Date.now();
+      sessions.set(sessionId, session);
+    }
+
     res.end();
   } catch (err) {
     console.error('Agent error:', err);

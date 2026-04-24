@@ -21,8 +21,8 @@ Formatting rules:
 - Only answer from content you actually retrieved.
 - Do not search more than once.
 - Keep answers concise and helpful.
-- Always use the exact full article URL from the URL field (e.g. https://help.z-emotion.com/hc/en-001/articles/1234567-Article-Name). Never link to a category or section page. Never construct or guess a URL — only use URLs explicitly provided in the article context.
 - If the user writes in a language other than English, find the answer using the English content, then reply in the user's language.`;
+
 
 export async function translateToEnglish(text: string): Promise<string> {
   const response = await client.messages.create({
@@ -40,37 +40,57 @@ export async function translateToEnglish(text: string): Promise<string> {
 export async function* askAgent(
   question: string,
   relevantArticles: ParsedArticle[],
+  history: Anthropic.MessageParam[],
   relevantImages: { alt: string; src: string }[] = []
-): AsyncGenerator<string> {
-  const articleContext =
-    relevantArticles.length > 0
-      ? `Relevant help center articles:\n\n${relevantArticles
-          .map((a, i) => `--- Article ${i + 1}: ${a.title} (Section: ${a.section}) ---\nURL: ${a.url}\n\n${a.body}`)
-          .join('\n\n')}\n\n---\n\n`
-      : 'No relevant help center articles found.\n\n---\n\n';
-
+): AsyncGenerator<{ chunk?: string; assistantMessage?: Anthropic.MessageParam }> {
   const imageContext = relevantImages.length > 0
-    ? `Relevant images:\n${relevantImages.map((img) => `![${img.alt}](${img.src})`).join('\n')}\n\n`
+    ? `\n\nRelevant images:\n${relevantImages.map((img) => `![${img.alt}](${img.src})`).join('\n')}`
     : '';
 
-  const messages: Anthropic.MessageParam[] = [
-    { role: 'user', content: `${articleContext}${imageContext}User question: ${question}` },
+  const userContent: Anthropic.MessageParam['content'] = [
+    ...relevantArticles.map((a) => ({
+      type: 'search_result' as const,
+      source: a.url,
+      title: `${a.title} (Section: ${a.section})`,
+      content: [{ type: 'text' as const, text: a.body }],
+      citations: { enabled: true },
+    })),
+    {
+      type: 'text' as const,
+      text: `${imageContext ? imageContext + '\n\n' : ''}User question: ${question}`,
+    },
   ];
 
+  const currentMessage: Anthropic.MessageParam = { role: 'user', content: userContent };
+  const messages: Anthropic.MessageParam[] = [...history, currentMessage];
+
   const stream = client.messages.stream({
-    model: 'claude-sonnet-4-6', /*claude-haiku-4-5-20251001  claude-sonnet-4-6*/
+    model: 'claude-sonnet-4-6',
     max_tokens: 2048,
     system: SYSTEM_PROMPT,
-    tools: [{ type: 'web_search_20250305', name: 'web_search' } as Anthropic.WebSearchTool20250305],
+    tools: [
+      { type: 'web_search_20250305', name: 'web_search' } as Anthropic.WebSearchTool20250305,
+      { type: 'web_fetch_20250910', name: 'web_fetch', max_uses: 3 } as any,
+    ],
     messages,
   });
+
+  let fullText = '';
 
   for await (const event of stream) {
     if (
       event.type === 'content_block_delta' &&
       event.delta.type === 'text_delta'
     ) {
-      yield event.delta.text;
+      fullText += event.delta.text;
+      yield { chunk: event.delta.text };
     }
   }
+
+  const assistantMessage: Anthropic.MessageParam = {
+    role: 'assistant',
+    content: fullText,
+  };
+
+  yield { assistantMessage };
 }
