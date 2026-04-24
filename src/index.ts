@@ -5,9 +5,9 @@ import * as crypto from 'crypto';
 import express, { Request, Response } from 'express';
 import Anthropic from '@anthropic-ai/sdk';
 import { fetchAllArticles } from './zendesk';
-import { buildEmbeddingIndex, buildIntentEmbeddings, detectIntent, searchArticles, getRelevantImages, getAllArticles } from './search';
+import { buildEmbeddingIndex, buildIntentEmbeddings } from './search';
 import { askAgent, translateToEnglish } from './agent';
-import { loadPatterns, searchPatterns, formatPatternResults } from './patterns';
+import { loadPatterns } from './patterns';
 import { ParsedArticle } from './types';
 
 const app = express();
@@ -62,69 +62,20 @@ app.post('/chat', async (req: Request, res: Response) => {
   res.setHeader('X-Session-Id', sessionId);
   res.setHeader('Access-Control-Expose-Headers', 'X-Session-Id');
 
-  const intent = await detectIntent(q);
-
-  if (intent === 'pattern') {
-    const results = await searchPatterns(q);
-    res.write(formatPatternResults(results));
-    res.end();
-    return;
-  }
-
   try {
     const lang = franc(q);
     const englishQ = (lang === 'eng' || lang === 'und') ? q : await translateToEnglish(q);
 
-    const APPS = ['z-weave', 'z-maya', 'z-unreal'];
-    const mentionedApp = APPS.find((app) => englishQ.toLowerCase().includes(app));
-
-    const isVersionQuery = /version|release|update|latest|newest|changelog/i.test(englishQ);
-
-    let relevant: ParsedArticle[] = [];
-    if (intent === 'general' && !mentionedApp) {
-      // skip article retrieval — Claude will use web search if needed
-    } else if (isVersionQuery && mentionedApp) {
-      const parseVersion = (title: string): number[] => {
-        const match = title.match(/^(\d+)\.(\d+)(?:\.(\d+))?/);
-        return match ? [+match[1], +match[2], +(match[3] ?? 0)] : [-1, -1, -1];
-      };
-      const compareVersions = (a: number[], b: number[]): number => {
-        for (let i = 0; i < 3; i++) if (b[i] !== a[i]) return b[i] - a[i];
-        return 0;
-      };
-      const allAppArticles = getAllArticles()
-        .filter((a) => a.section.toLowerCase().includes(mentionedApp));
-      const versionArticles = allAppArticles
-        .filter((a) => /^\d+\.\d+/.test(a.title))
-        .sort((a, b) => compareVersions(parseVersion(a.title), parseVersion(b.title)));
-      console.log('[version sort]', versionArticles.slice(0, 5).map((a) => `"${a.title}"`).join(', '));
-      relevant = versionArticles.length > 0 ? versionArticles.slice(0, 3) : allAppArticles.slice(0, 3);
-    } else {
-      relevant = await searchArticles(englishQ, mentionedApp ? 30 : 5);
-      if (mentionedApp) {
-        const filtered = relevant.filter((a) => a.section.toLowerCase().includes(mentionedApp));
-        if (filtered.length > 0) {
-          const manuals = filtered.filter((a) => !a.section.toLowerCase().includes('faq'));
-          const faqs = filtered.filter((a) => a.section.toLowerCase().includes('faq'));
-          relevant = [...manuals, ...faqs].slice(0, 5);
-        } else {
-          relevant = relevant.slice(0, 5);
-        }
-      }
-    }
-
-    console.log('[retrieved articles]', relevant.map((a) => `"${a.title}" (${a.section})`).join(', '));
-    const images = await getRelevantImages(englishQ, relevant);
     const history = session.history.slice(-HISTORY_WINDOW);
 
     let assistantMessage: Anthropic.MessageParam | undefined;
-    for await (const event of askAgent(q, relevant, history, images)) {
+    for await (const event of askAgent(englishQ, history)) {
       if (event.chunk) res.write(event.chunk);
       if (event.assistantMessage) assistantMessage = event.assistantMessage;
     }
 
     if (assistantMessage) {
-      session.history = [...history, { role: 'user' as const, content: q }, assistantMessage].slice(-HISTORY_WINDOW);
+      session.history = [...history, { role: 'user' as const, content: englishQ }, assistantMessage].slice(-HISTORY_WINDOW);
       session.lastActive = Date.now();
       sessions.set(sessionId, session);
     }
