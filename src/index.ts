@@ -1,12 +1,11 @@
 import 'dotenv/config';
-import { franc } from 'franc-min';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import express, { Request, Response } from 'express';
 import Anthropic from '@anthropic-ai/sdk';
 import { fetchAllArticles } from './zendesk';
-import { buildEmbeddingIndex, buildIntentEmbeddings } from './search';
-import { askAgent, translateToEnglish } from './agent';
+import { buildEmbeddingIndex } from './search';
+import { askAgent } from './agent';
 import { loadPatterns } from './patterns';
 import { ParsedArticle } from './types';
 
@@ -63,19 +62,16 @@ app.post('/chat', async (req: Request, res: Response) => {
   res.setHeader('Access-Control-Expose-Headers', 'X-Session-Id');
 
   try {
-    const lang = franc(q);
-    const englishQ = (lang === 'eng' || lang === 'und') ? q : await translateToEnglish(q);
-
     const history = session.history.slice(-HISTORY_WINDOW);
 
     let assistantMessage: Anthropic.MessageParam | undefined;
-    for await (const event of askAgent(englishQ, history)) {
+    for await (const event of askAgent(q, history)) {
       if (event.chunk) res.write(event.chunk);
       if (event.assistantMessage) assistantMessage = event.assistantMessage;
     }
 
     if (assistantMessage) {
-      session.history = [...history, { role: 'user' as const, content: englishQ }, assistantMessage].slice(-HISTORY_WINDOW);
+      session.history = [...history, { role: 'user' as const, content: q }, assistantMessage].slice(-HISTORY_WINDOW);
       session.lastActive = Date.now();
       sessions.set(sessionId, session);
     }
@@ -99,7 +95,7 @@ async function main() {
   console.log('Starting Help Center Agent...');
 
   articles = await fetchAllArticles();
-  await Promise.all([buildEmbeddingIndex(articles), buildIntentEmbeddings(), loadPatterns()]);
+  await Promise.all([buildEmbeddingIndex(articles), loadPatterns()]);
   console.log(`Ready with ${articles.length} help center articles.`);
 
   setInterval(refreshArticles, REFRESH_INTERVAL_MS);

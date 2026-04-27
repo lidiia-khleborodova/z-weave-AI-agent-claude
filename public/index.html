@@ -299,26 +299,29 @@
       // Process markdown links first (before escaping), then escape remaining text
       const parts = [];
       // Regex matches: [text](url), bare urls, **bold**, *italic*
-      const pattern = /\[([^\]]+)\]\((https?:\/\/[^)]+)\)|(https?:\/\/[^\s<>'"]+)|\*\*(.+?)\*\*|\*(.+?)\*/g;
+      const pattern = /!\[([^\]]*)\]\((https?:\/\/[^)]+)\)|\[([^\]]+)\]\((https?:\/\/[^)]+)\)|(https?:\/\/[^\s<>'"]+)|\*\*(.+?)\*\*|\*(.+?)\*/g;
       let last = 0;
       let match;
       while ((match = pattern.exec(text)) !== null) {
         // Escape plain text before this match
         parts.push(escapeHtml(text.slice(last, match.index)));
-        if (match[1] && match[2]) {
-          // [label](url)
-          parts.push(`<a href="${match[2]}" target="_blank">${escapeHtml(match[1])}</a>`);
-        } else if (match[3]) {
-          // bare url — strip trailing punctuation that isn't part of the URL
-          const url = match[3].replace(/[.,;:!'")\]]+$/, '');
-          const trailing = match[3].slice(url.length);
-          parts.push(`<a href="${url}" target="_blank">${escapeHtml(url)}</a>${escapeHtml(trailing)}`);
+        if (match[1] !== undefined) {
+          // ![alt](url) — inline image
+          parts.push(`<img src="${match[2]}" alt="${escapeHtml(match[1])}" class="img-chat">`);
         } else if (match[4]) {
-          // **bold**
-          parts.push(`<strong>${escapeHtml(match[4])}</strong>`);
+          // [label](url)
+          parts.push(`<a href="${match[4]}" target="_blank">${escapeHtml(match[3] ?? match[4])}</a>`);
         } else if (match[5]) {
+          // bare url — strip trailing punctuation that isn't part of the URL
+          const url = match[5].replace(/[.,;:!'")\]]+$/, '');
+          const trailing = match[5].slice(url.length);
+          parts.push(`<a href="${url}" target="_blank">${escapeHtml(url)}</a>${escapeHtml(trailing)}`);
+        } else if (match[6]) {
+          // **bold**
+          parts.push(`<strong>${escapeHtml(match[6])}</strong>`);
+        } else if (match[7]) {
           // *italic*
-          parts.push(`<em>${escapeHtml(match[5])}</em>`);
+          parts.push(`<em>${escapeHtml(match[7])}</em>`);
         }
         last = match.index + match[0].length;
       }
@@ -352,12 +355,22 @@
         const decoder = new TextDecoder();
         let fullText = '';
 
+        const isNearBottom = () => messages.scrollHeight - messages.scrollTop - messages.clientHeight < 100;
+
         while (true) {
           const { done, value } = await reader.read();
-          if (done) break;
+          if (done) {
+            typingDiv.innerHTML = renderMarkdown(fullText);
+            if (isNearBottom()) messages.scrollTop = messages.scrollHeight;
+            break;
+          }
           fullText += decoder.decode(value, { stream: true });
-          typingDiv.innerHTML = renderMarkdown(fullText);
-          messages.scrollTop = messages.scrollHeight;
+          // render only up to the last newline so URLs are never split mid-render
+          const lastNewline = fullText.lastIndexOf('\n');
+          if (lastNewline !== -1) {
+            typingDiv.innerHTML = renderMarkdown(fullText.slice(0, lastNewline));
+            if (isNearBottom()) messages.scrollTop = messages.scrollHeight;
+          }
         }
       } catch (err) {
         typingDiv.textContent = 'Something went wrong. Please try again.';

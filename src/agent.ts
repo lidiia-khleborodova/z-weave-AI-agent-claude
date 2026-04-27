@@ -1,30 +1,23 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { searchArticles, getRelevantImages } from './search';
+import { searchArticles, getAllArticles } from './search';
 import { searchPatterns, formatPatternResults } from './patterns';
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
 
 const SYSTEM_PROMPT = `You are a helpful support assistant for Z-Emotion.
 
-You have access to the following tools:
-- search_articles: Search the Z-Emotion help center articles. Use this for any question about how to use Z-Emotion software (z-weave, z-maya, z-unreal), features, installation, settings, tutorials, etc.
-- search_patterns: Search the Z-Emotion asset library for downloadable sewing patterns. Use this only when the user is asking to find or download a pattern file.
-- web_search: Search the web. If search_articles returns no results or the results don't answer the question, always use web_search before giving up.
-- web_fetch: Fetch a specific URL. Use this only if you have a specific URL to retrieve.
+Tools: search_articles (help center), get_latest_version (release notes), search_patterns (asset library patterns), web_search (web, only if search_articles fails), web_fetch (only if user provides a URL).
 
-Guidelines:
-- Always call search_articles first for any product-related question. If it returns no results or doesn't answer the question, always follow up with web_search before giving up.
-- When articles are returned, prefer content from manual sections over FAQ sections.
-- If the article contains YouTube video URLs and the user asked for a tutorial or video, include the relevant YouTube link(s) in your answer.
-- If relevant images are provided in the search results, include them using markdown: ![alt](url). Place images after the relevant instruction step.
-- Never make up information or answer from general knowledge.
-- Only answer from content you actually retrieved.
-- Never use emojis.
-- Never use horizontal dividers (--- or ***).
-- Never mention the source of your information. Just answer directly.
-- Keep answers concise and helpful.
-- If you cannot find the answer, say so and suggest contacting Z-Emotion support or visiting https://z-emotion.com.
-- If the user writes in a language other than English, search in English, then reply in the user's language.`;
+Rules:
+- Always call search_articles first. If it returns no results or doesn't answer, use web_search before giving up.
+- Prefer manual section articles over FAQ.
+- Include YouTube links if the user asked for a tutorial and the article has them.
+- Include images using markdown: ![alt](url). Place after the relevant step.
+- Answer only from retrieved content. Never use general knowledge.
+- End every answer with a markdown link to the source article: [Title](url).
+- No emojis, no dividers, no filler phrases ("Let me check" etc.), no mention of sources.
+- If no answer found, suggest https://z-emotion.com or contacting support.
+- If user writes in another language, search in English, reply in their language.`;
 
 const TOOLS: Anthropic.Tool[] = [
   {
@@ -34,9 +27,20 @@ const TOOLS: Anthropic.Tool[] = [
       type: 'object' as const,
       properties: {
         query: { type: 'string', description: 'The search query in English' },
-        top_n: { type: 'number', description: 'Number of articles to return (default 5, max 10)' },
+        top_n: { type: 'number', description: 'Number of articles to return (default 3, max 5)' },
       },
       required: ['query'],
+    },
+  },
+  {
+    name: 'get_latest_version',
+    description: 'Returns the latest release notes for a specific Z-Emotion app by sorting version numbers. Use when the user asks about the latest version, recent updates, or changelog.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        app: { type: 'string', description: 'The app name: "z-weave", "z-maya", or "z-unreal"' },
+      },
+      required: ['app'],
     },
   },
   {
@@ -60,18 +64,38 @@ const BUILTIN_TOOLS = [
 async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
   if (name === 'search_articles') {
     const query = input.query as string;
-    const topN = Math.min((input.top_n as number | undefined) ?? 5, 10);
+    const topN = Math.min((input.top_n as number | undefined) ?? 3, 5);
     const articles = await searchArticles(query, topN);
     if (articles.length === 0) return 'No articles found.';
-    const images = await getRelevantImages(query, articles);
-    const imageSection = images.length > 0
-      ? `\n\nRelevant images:\n${images.map((img) => `![${img.alt}](${img.src})`).join('\n')}`
+    const allImages = articles.flatMap((a) => a.images.filter((img) => img.alt && !/^Screenshot\s[\d\-. ]+\.png$/i.test(img.alt)));
+    const imageSection = allImages.length > 0
+      ? `\n\nRelevant images:\n${allImages.map((img) => `![${img.alt}](${img.src})`).join('\n')}`
       : '';
     const articleText = articles.map((a) =>
       `Title: ${a.title}\nSection: ${a.section}\nURL: ${a.url}\n\n${a.body}`
     ).join('\n\n---\n\n');
     console.log('[search_articles]', articles.map((a) => `"${a.title}" (${a.section})`).join(', '));
     return articleText + imageSection;
+  }
+
+  if (name === 'get_latest_version') {
+    const app = (input.app as string).toLowerCase();
+    const parseVersion = (title: string): number[] => {
+      const match = title.match(/^(\d+)\.(\d+)(?:\.(\d+))?/);
+      return match ? [+match[1], +match[2], +(match[3] ?? 0)] : [-1, -1, -1];
+    };
+    const compareVersions = (a: number[], b: number[]): number => {
+      for (let i = 0; i < 3; i++) if (b[i] !== a[i]) return b[i] - a[i];
+      return 0;
+    };
+    const appArticles = getAllArticles().filter((a) => a.section.toLowerCase().includes(app));
+    const versionArticles = appArticles
+      .filter((a) => /^\d+\.\d+/.test(a.title))
+      .sort((a, b) => compareVersions(parseVersion(a.title), parseVersion(b.title)))
+      .slice(0, 3);
+    if (versionArticles.length === 0) return `No release notes found for ${app}.`;
+    console.log('[get_latest_version]', versionArticles.map((a) => `"${a.title}"`).join(', '));
+    return versionArticles.map((a) => `Title: ${a.title}\nURL: ${a.url}\n\n${a.body}`).join('\n\n---\n\n');
   }
 
   if (name === 'search_patterns') {
@@ -115,7 +139,6 @@ export async function* askAgent(
     });
 
     let fullText = '';
-    const contentBlocks: Anthropic.ContentBlock[] = [];
 
     for await (const event of stream) {
       if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
@@ -125,12 +148,6 @@ export async function* askAgent(
     }
 
     const response = await stream.finalMessage();
-
-    // collect all content blocks from the response
-    for (const block of response.content) {
-      contentBlocks.push(block);
-    }
-
     messages.push({ role: 'assistant', content: response.content });
 
     if (response.stop_reason === 'end_turn') {
