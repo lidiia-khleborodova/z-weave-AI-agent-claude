@@ -1,3 +1,30 @@
+export interface ZendeskSection {
+  id: number;
+  name: string;
+  category_id: number;
+}
+
+export interface ZendeskCategory {
+  id: number;
+  name: string;
+}
+
+export interface ZendeskArticlesResponse {
+  articles: ZendeskArticle[];
+  next_page: string | null;
+  count: number;
+}
+
+export interface ZendeskSectionsResponse {
+  sections: ZendeskSection[];
+  next_page: string | null;
+}
+
+export interface ZendeskCategoriesResponse {
+  categories: ZendeskCategory[];
+  next_page: string | null;
+}
+
 export interface ZendeskArticle {
   id: number;
   title: string;

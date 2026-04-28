@@ -1,6 +1,6 @@
 import * as https from 'https';
 import * as http from 'http';
-import { ZendeskArticle, ParsedArticle, ArticleImage } from './types';
+import type { ZendeskArticle, ZendeskArticlesResponse, ZendeskSectionsResponse, ZendeskCategoriesResponse, ParsedArticle, ArticleImage } from './types';
 
 const SUBDOMAIN = process.env.ZENDESK_SUBDOMAIN!;
 const EMAIL = process.env.ZENDESK_EMAIL!;
@@ -99,32 +99,6 @@ function stripHtml(html: string): string {
   return text.replace(/\n{3,}/g, '\n\n').trim();
 }
 
-interface ZendeskArticlesResponse {
-  articles: ZendeskArticle[];
-  next_page: string | null;
-  count: number;
-}
-
-interface ZendeskSection {
-  id: number;
-  name: string;
-  category_id: number;
-}
-
-interface ZendeskCategory {
-  id: number;
-  name: string;
-}
-
-interface ZendeskSectionsResponse {
-  sections: ZendeskSection[];
-  next_page: string | null;
-}
-
-interface ZendeskCategoriesResponse {
-  categories: ZendeskCategory[];
-  next_page: string | null;
-}
 
 async function fetchSectionToCategory(): Promise<Map<number, string>> {
   const categoryMap = new Map<number, string>();
