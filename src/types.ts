@@ -39,8 +39,13 @@ export interface ZendeskArticle {
 export interface Asset {
   assetId: string;
   name: string;
+  category: string;       // 'garment' | 'fabric'
   styleType: string;
   gender: string;
+  color: string[];
+  texture: string;
+  composition: string;
+  fileType: string;       // 'zls' | 'u3ma'
   previewUrl: string;
   downloadUrl: string;
 }

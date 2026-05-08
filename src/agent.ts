@@ -9,20 +9,23 @@ const SYSTEM_PROMPT = `You are a helpful support assistant for Z-Emotion.
 Tools: search_articles (help center), get_latest_version (release notes), search_patterns (asset library patterns), web_search (web, only if search_articles fails), web_fetch (only if user provides a URL).
 
 Rules:
-- Always call search_articles first. If it returns no results or doesn't answer, use web_search before giving up.
+- For greetings or general conversation (e.g. "hi", "hello", "thanks"), respond directly without calling any tool.
+- If the user wants to find or download a pattern file, call search_patterns.
+- For all other product questions, call search_articles first. If it returns no results or doesn't answer, use web_search before giving up.
 - Prefer manual section articles over FAQ.
 - Include YouTube links if the user asked for a tutorial and the article has them.
 - Include images using markdown: ![alt](url). Place after the relevant step.
 - Answer only from retrieved content. Never use general knowledge.
-- End every answer with a markdown link to the source article: [Title](url).
-- No emojis, no dividers, no filler phrases ("Let me check" etc.), no mention of sources.
+- End every answer with exactly this format on its own line: "Find the source here: [Title](url)"
+- Never use horizontal dividers (---, ***, ___). Never output "---" under any circumstances.
+- No emojis, no filler phrases ("Let me check" etc.), no mention of sources.
 - If no answer found, suggest https://z-emotion.com or contacting support.
 - If user writes in another language, search in English, reply in their language.`;
 
 const TOOLS: Anthropic.Tool[] = [
   {
     name: 'search_articles',
-    description: 'Search Z-Emotion help center articles by semantic similarity. Returns the most relevant articles for the query.',
+    description: 'Search Z-Emotion help center articles by semantic similarity. Always translate the query to English before searching. Returns the most relevant articles for the query.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -45,7 +48,7 @@ const TOOLS: Anthropic.Tool[] = [
   },
   {
     name: 'search_patterns',
-    description: 'Search the Z-Emotion asset library for downloadable sewing patterns (ZLS files). Use only when the user wants to find or download a pattern.',
+    description: 'Search the Z-Emotion asset library for downloadable ZLS pattern files. Use only when the user wants to find or download a pattern. Always translate the query to English before searching. Output the tool result exactly as-is without any modification.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -139,11 +142,12 @@ export async function* askAgent(
     });
 
     let fullText = '';
+    const chunks: string[] = [];
 
     for await (const event of stream) {
       if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
         fullText += event.delta.text;
-        yield { chunk: event.delta.text };
+        chunks.push(event.delta.text);
       }
     }
 
@@ -151,6 +155,7 @@ export async function* askAgent(
     messages.push({ role: 'assistant', content: response.content });
 
     if (response.stop_reason === 'end_turn') {
+      for (const chunk of chunks) yield { chunk };
       yield {
         assistantMessage: { role: 'assistant', content: fullText },
       };
@@ -161,6 +166,22 @@ export async function* askAgent(
       const toolUseBlocks = response.content.filter(
         (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use'
       );
+
+      console.log('[tool_use]', toolUseBlocks.map((b) => b.name).join(', '));
+
+      // handle search_patterns directly — yield result and stop so Claude never reformats it
+      const patternTool = toolUseBlocks.find((b) => b.name === 'search_patterns');
+      if (patternTool) {
+        const result = await executeTool('search_patterns', patternTool.input as Record<string, unknown>);
+        const hasAssets = result.startsWith('ASSET_RESULTS:');
+        const intro = hasAssets ? 'Here are the matching patterns from the asset library:\n\n' : '';
+        yield { chunk: intro + result };
+        yield { assistantMessage: { role: 'assistant', content: intro + result } };
+        return;
+      }
+
+      // for other tools, flush buffered text first
+      for (const chunk of chunks) yield { chunk };
 
       const toolResults: Anthropic.ToolResultBlockParam[] = await Promise.all(
         toolUseBlocks.map(async (toolUse) => {

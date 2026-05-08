@@ -70,7 +70,8 @@ app.post('/chat', async (req: Request, res: Response) => {
       if (event.assistantMessage) assistantMessage = event.assistantMessage;
     }
 
-    if (assistantMessage) {
+    const isAssetResult = typeof assistantMessage?.content === 'string' && assistantMessage.content.startsWith('ASSET_RESULTS:');
+    if (assistantMessage && !isAssetResult) {
       session.history = [...history, { role: 'user' as const, content: q }, assistantMessage].slice(-HISTORY_WINDOW);
       session.lastActive = Date.now();
       sessions.set(sessionId, session);

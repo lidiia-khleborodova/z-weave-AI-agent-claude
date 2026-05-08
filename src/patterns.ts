@@ -13,16 +13,47 @@ interface RawAsset {
   assetName?: string;
   name?: string;
   title?: string;
+  category?: string;
   category_sub?: string;
   category_sub_sub?: string;
-  styleType?: string;
-  category?: string;
   gender?: string;
+  color?: string[];
+  texture?: string;
+  physics?: string;
+  composition?: { label: string; value: string; amount: string }[];
+  file_type?: string[];
   url_thumbnail?: string[];
-  previewUrl?: string;
-  thumbnailUrl?: string;
   url_asset?: string[];
-  downloadUrl?: string;
+}
+
+function mapRawAsset(r: RawAsset): Asset {
+  const category = r.category ?? 'garment';
+  const styleType = [r.category_sub, r.category_sub_sub].filter(Boolean).join(' > ');
+  const color = Array.isArray(r.color) ? r.color : [];
+  const composition = r.composition?.map((c) => `${c.label} ${c.amount}%`).join(', ') ?? '';
+  const fileType = r.file_type?.[0] ?? (category === 'fabric' ? 'u3ma' : 'zls');
+
+  return {
+    assetId: r.assetId ?? r.id ?? r._id ?? '',
+    name: r.assetName ?? r.name ?? r.title ?? 'Unknown',
+    category,
+    styleType,
+    gender: r.gender ?? '',
+    color,
+    texture: r.texture ?? '',
+    composition,
+    fileType,
+    previewUrl: r.url_thumbnail?.[0] ?? '',
+    downloadUrl: r.url_asset?.[0] ?? '',
+  };
+}
+
+function assetEmbedText(a: Asset): string {
+  const parts = [a.name, a.category, a.styleType, a.gender];
+  if (a.color.length > 0) parts.push(a.color.join(' '), a.color.join(' ')); // repeat for weight
+  if (a.texture) parts.push(a.texture);
+  if (a.composition) parts.push(a.composition, a.composition, a.composition); // repeat composition heavily
+  return parts.filter(Boolean).join(' ');
 }
 
 async function fetchAssets(): Promise<Asset[]> {
@@ -44,7 +75,7 @@ async function fetchAssets(): Promise<Asset[]> {
   } else {
     const search = (obj: Record<string, unknown>, depth = 0): RawAsset[] | null => {
       if (depth > 2) return null;
-      for (const key of ['assets', 'items', 'list', 'results', 'content']) {
+      for (const key of ['assets', 'items', 'list', 'results', 'content', 'data']) {
         if (Array.isArray(obj[key]) && (obj[key] as unknown[]).length > 0) return obj[key] as RawAsset[];
       }
       for (const val of Object.values(obj)) {
@@ -58,21 +89,14 @@ async function fetchAssets(): Promise<Asset[]> {
     raw = search(data) ?? [];
   }
 
-  return raw.map((r) => ({
-    assetId: r.assetId ?? r.id ?? r._id ?? '',
-    name: r.assetName ?? r.name ?? r.title ?? 'Unknown',
-    styleType: [r.category_sub, r.category_sub_sub].filter(Boolean).join(' > ') || r.styleType || r.category || '',
-    gender: r.gender ?? '',
-    previewUrl: r.url_thumbnail?.[0] ?? r.previewUrl ?? r.thumbnailUrl ?? '',
-    downloadUrl: r.url_asset?.[0] ?? r.downloadUrl ?? '',
-  }));
+  return raw.map(mapRawAsset);
 }
 
 async function buildAssetEmbeddings(assets: Asset[]): Promise<void> {
   embeddedAssets = await Promise.all(
     assets.map(async (asset) => ({
       asset,
-      embedding: await embed(`${asset.name} ${asset.gender} ${asset.styleType}`),
+      embedding: await embed(assetEmbedText(asset)),
     }))
   );
 }
@@ -96,27 +120,44 @@ export async function loadAssets(): Promise<void> {
   }, REFRESH_INTERVAL_MS);
 }
 
-export async function searchAssets(query: string, topN = 5): Promise<Asset[]> {
+export async function searchAssets(query: string, threshold = 0.5): Promise<Asset[]> {
   if (embeddedAssets.length === 0) return [];
+  const queryLower = query.toLowerCase();
   const queryEmbedding = await embed(query);
-  return embeddedAssets
-    .map(({ asset, embedding }) => ({
-      asset,
-      score: cosineSimilarity(queryEmbedding, embedding),
-    }))
+
+  const MATERIALS = ['cotton','polyester','silk','wool','linen','nylon','rayon','spandex','lycra','denim','leather','velvet','satin','chiffon','modal','bamboo','viscose','acrylic','cashmere','hemp'];
+
+  const mentionedMaterial = MATERIALS.find((m) => queryLower.includes(m));
+
+  const scored = embeddedAssets.map(({ asset, embedding }) => {
+    let score = cosineSimilarity(queryEmbedding, embedding);
+    const colorMatch = asset.color.length > 0 && asset.color.some(
+      (c) => queryLower.includes(c.toLowerCase()) || c.toLowerCase().includes(queryLower.split(' ')[0])
+    );
+    if (colorMatch) score += 0.1;
+    return { asset, score, colorMatch };
+  });
+
+  const queryMentionsColor = scored.some((s) => s.colorMatch);
+
+  return scored
+    .filter((s) => {
+      if (s.score < threshold) return false;
+      // if query mentions a material, require it to appear in composition
+      if (mentionedMaterial && s.asset.composition) {
+        if (!s.asset.composition.toLowerCase().includes(mentionedMaterial)) return false;
+      }
+      // if query mentions a color, require color match for color-tagged assets
+      if (queryMentionsColor && s.asset.color.length > 0) return s.colorMatch;
+      return true;
+    })
     .sort((a, b) => b.score - a.score)
-    .slice(0, topN)
     .map((s) => s.asset);
 }
 
 export function formatAssetResults(assets: Asset[]): string {
   if (assets.length === 0) {
-    return "I couldn't find any assets matching your request. Try searching with different keywords (e.g. gender, item type).";
+    return "I couldn't find any assets matching your request. Try searching with different keywords.";
   }
-  const lines = assets.map((a) => {
-    const meta = [a.gender, a.styleType].filter(Boolean).join(', ');
-    const preview = a.previewUrl ? ` ![${a.name}](${a.previewUrl})` : '';
-    return `- **${a.name}**${meta ? ` (${meta})` : ''}: [Download](${a.downloadUrl})${preview}`;
-  });
-  return `Here are the matching assets from the library:\n\n${lines.join('\n')}`;
+  return `ASSET_RESULTS:${JSON.stringify(assets)}`;
 }
