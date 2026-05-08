@@ -6,7 +6,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { fetchAllArticles } from './zendesk';
 import { buildEmbeddingIndex } from './search';
 import { askAgent } from './agent';
-import { loadPatterns } from './patterns';
+import { loadAssets } from './patterns';
 import { ParsedArticle } from './types';
 
 const app = express();
@@ -95,7 +95,7 @@ async function main() {
   console.log('Starting Help Center Agent...');
 
   articles = await fetchAllArticles();
-  await Promise.all([buildEmbeddingIndex(articles), loadPatterns()]);
+  await Promise.all([buildEmbeddingIndex(articles), loadAssets()]);
   console.log(`Ready with ${articles.length} help center articles.`);
 
   setInterval(refreshArticles, REFRESH_INTERVAL_MS);

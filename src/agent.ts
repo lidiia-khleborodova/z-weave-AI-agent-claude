@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { searchArticles, getAllArticles } from './search';
-import { searchPatterns, formatPatternResults } from './patterns';
+import { searchAssets, formatAssetResults } from './patterns';
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
 
@@ -100,8 +100,8 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
 
   if (name === 'search_patterns') {
     const query = input.query as string;
-    const patterns = await searchPatterns(query);
-    return formatPatternResults(patterns);
+    const assets = await searchAssets(query);
+    return formatAssetResults(assets);
   }
 
   return 'Unknown tool.';

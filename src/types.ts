@@ -36,15 +36,17 @@ export interface ZendeskArticle {
   draft: boolean;
 }
 
-export interface Pattern {
+export interface Asset {
+  assetId: string;
   name: string;
-  link: string;
+  styleType: string;
   gender: string;
-  type: string;
+  previewUrl: string;
+  downloadUrl: string;
 }
 
-export interface EmbeddedPattern {
-  pattern: Pattern;
+export interface EmbeddedAsset {
+  asset: Asset;
   embedding: number[];
 }
 
